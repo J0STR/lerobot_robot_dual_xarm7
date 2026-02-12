@@ -38,6 +38,8 @@ class Dual_xArm7(Robot):
         self.robot_left.set_collision_tool_model(tool_type=1)
         self.robot_right.set_gripper_enable(enable=True)
         self.robot_left.set_gripper_enable(enable=True)
+        self.robot_right.set_tcp_offset([0, 0, 0, 0, 0, 0], wait=True)
+        self.robot_left.set_tcp_offset([0, 0, 0, 0, 0, 0], wait=True)
         self.robot_right.set_mode(1)
         self.robot_left.set_mode(1)
         self.robot_right.set_state(0)    
