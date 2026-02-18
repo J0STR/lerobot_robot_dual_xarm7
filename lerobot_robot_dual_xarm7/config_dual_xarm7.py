@@ -17,12 +17,16 @@ class Dual_xArm7Config(RobotConfig):
 
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
-            # "top_down": OpenCVCameraConfig(
-            #     index_or_path="/dev/video4",
-            #     fps=30,
-            #     width=640,
-            #     height=480,
-            # ),
+            "top_down": RealSenseCameraConfig(
+                serial_number_or_name="352122273665",
+                fps=30,
+                width=640,
+                height=480),
+            "wurm_eye": RealSenseCameraConfig(
+                serial_number_or_name="409122274688",
+                fps=30,
+                width=640,
+                height=480),
             "wrist_right": RealSenseCameraConfig(
                 serial_number_or_name="352122273091",
                 fps=30,
@@ -33,5 +37,6 @@ class Dual_xArm7Config(RobotConfig):
                 fps=30,
                 width=640,
                 height=480),
+                
         }
     )
