@@ -89,8 +89,8 @@ class Dual_xArm7(Robot):
 
         self.robot_right.set_servo_angle_j(joints_right, is_radian=True)
         self.robot_left.set_servo_angle_j(joints_left, is_radian=True)       
-        self.robot_right.set_gripper_g2_position(gripper_right_G2)
-        self.robot_left.set_gripper_position(gripper_left)  
+        self.robot_right.set_gripper_g2_position(gripper_right_G2,speed=225)
+        self.robot_left.set_gripper_position(gripper_left, speed=5000)  
 
         action = {**{f"right_joint_{i}.pos": joints_right[i-1] for i in range(1,8)},
                   "right_gripper.pos": gripper_right,
