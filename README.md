@@ -2,6 +2,12 @@
 
 This Repository implements two **uFactory xArm7** to [LeRobot](https://github.com/huggingface/lerobot).
 
+---
+## Install
+
+```
+pip install -e .
+```
 
 ---
 ## The Setup
