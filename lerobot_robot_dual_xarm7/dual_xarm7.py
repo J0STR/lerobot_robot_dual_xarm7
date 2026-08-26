@@ -6,6 +6,7 @@ from lerobot.utils.errors import DeviceNotConnectedError, DeviceAlreadyConnected
 from lerobot.robots import Robot
 
 from .config_dual_xarm7 import Dual_xArm7Config
+from .xarm_class_joint_space import xArm7
 
 from xarm.wrapper import XArmAPI
 import numpy as np
@@ -20,8 +21,8 @@ class Dual_xArm7(Robot):
         
         self._ip_right = config.robot_ip_right
         self._ip_left = config.robot_ip_left
-        self.robot_right = None
-        self.robot_left = None
+        self.robot_right: xArm7
+        self.robot_left: xArm7
         self._is_connected = False
     
     
@@ -29,47 +30,57 @@ class Dual_xArm7(Robot):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
         
-        self.robot_right = XArmAPI(self._ip_right)
-        self.robot_left = XArmAPI(self._ip_left)
-        self._is_connected = True
-        self.robot_right.motion_enable(enable=True)
-        self.robot_left.motion_enable(enable=True)
-        self.robot_right.set_collision_tool_model(tool_type=1)
-        self.robot_left.set_collision_tool_model(tool_type=1)
-        self.robot_right.set_gripper_enable(enable=True)
-        self.robot_left.set_gripper_enable(enable=True)
-        self.robot_right.set_tcp_offset([0, 0, 0, 0, 0, 0], wait=True)
-        self.robot_left.set_tcp_offset([0, 0, 0, 0, 0, 0], wait=True)
-        self.robot_right.set_mode(1)
-        self.robot_left.set_mode(1)
-        self.robot_right.set_state(0)    
-        self.robot_left.set_state(0)    
+        self.robot_right = xArm7(ip=self._ip_right,
+                                 gripper_g2=True)
+        self.robot_left = xArm7(ip=self._ip_left,
+                                 gripper_g2=False)
+
+        self.robot_right.start_up()
+        self.robot_left.start_up()
+        self._is_connected = True  
 
         for cam in self.cameras.values():
             cam.connect()
 
         self.configure()
 
+    def reset(self):
+        self.robot_right.reset()
+        self.robot_left.reset()
+
+    def manual_mode(self):
+        self.robot_right.manual_mode()
+        self.robot_left.manual_mode()
+
+    def servo_mode(self):
+        self.robot_right.servo_mode()
+        self.robot_left.servo_mode()
+
+    def is_error(self):
+        if self.robot_right.is_error() or self.robot_left.is_error():
+            return True
+        else:
+            return False
     
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
             raise ConnectionError(f"{self} is not connected.")
 
         # Read arm position
-        code, [joint_angles, joint_velocity, joint_efforts] = self.robot_right.get_joint_states(is_radian=True)
+        joint_angles, joint_velocity, joint_efforts = self.robot_right.get_joints_radian()
         obs_dict = {}
         for i, angle in enumerate(joint_angles):  # store angle,velocity and effort
             obs_dict[f"right_joint_{i+1}.pos"] = angle
             obs_dict[f"right_joint_{i+1}.effort"] = joint_efforts[i]
             obs_dict[f"right_joint_{i+1}.vel"] = joint_velocity[i]
-        code, [joint_angles, joint_velocity, joint_efforts] = self.robot_left.get_joint_states(is_radian=True)
+        joint_angles, joint_velocity, joint_efforts = self.robot_left.get_joints_radian()
         for i, angle in enumerate(joint_angles):  # store angle,velocity and effort
             obs_dict[f"left_joint_{i+1}.pos"] = angle
             obs_dict[f"left_joint_{i+1}.effort"] = joint_efforts[i]
             obs_dict[f"left_joint_{i+1}.vel"] = joint_velocity[i]
-        code, gripper_pos = self.robot_right.get_gripper_position()
+        gripper_pos = self.robot_right.get_gripper_pos()
         obs_dict["right_gripper.pos"] = gripper_pos
-        code, gripper_pos = self.robot_left.get_gripper_position()
+        gripper_pos = self.robot_left.get_gripper_pos()
         obs_dict["left_gripper.pos"] = gripper_pos
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
@@ -84,13 +95,12 @@ class Dual_xArm7(Robot):
         joints_left = [goal_pos[f"left_joint_{i}"] for i in range(1,8)]
 
         gripper_right = goal_pos["right_gripper"]
-        gripper_right_G2 = gripper_right/10 # griper G2
         gripper_left = goal_pos["left_gripper"]
 
-        self.robot_right.set_servo_angle_j(joints_right, is_radian=True)
-        self.robot_left.set_servo_angle_j(joints_left, is_radian=True)       
-        self.robot_right.set_gripper_g2_position(gripper_right_G2,speed=225)
-        self.robot_left.set_gripper_position(gripper_left, speed=5000)  
+        self.robot_right.set_joints_radian(joints_right)
+        self.robot_left.set_joints_radian(joints_left)       
+        self.robot_right.set_gripper_pos(gripper_right)
+        self.robot_left.set_gripper_pos(gripper_left)  
 
         action = {**{f"right_joint_{i}.pos": joints_right[i-1] for i in range(1,8)},
                   "right_gripper.pos": gripper_right,
@@ -104,8 +114,8 @@ class Dual_xArm7(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} not connected")
 
-        self.robot_right.disconnect()
-        self.robot_left.disconnect()
+        self.robot_right.destroy()
+        self.robot_left.destroy()
         self._is_connected = False
         for cam in self.cameras.values():
             cam.disconnect()
