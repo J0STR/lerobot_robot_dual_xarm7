@@ -31,6 +31,7 @@ class xArm7:
         self.previous_gripper_pos = self.get_gripper_pos()
         self.gripper_timer = 0
         self.gripper_moving = True
+        self._last_gripper_code = 0
         # Solver vars
         # self.IK_Solver = IK_Solver()
 
@@ -39,10 +40,25 @@ class xArm7:
         Run after connection. Sets the robot to an initial pose and opens the gripper.
         """
         self.is_error()
+        self.clear_errors()
         self.position_mode()
         self.arm.set_servo_angle(angle=init_pose,speed=1,mvacc=100,wait=True,is_radian=True)
-        self.servo_mode()       
+        self.servo_mode()
         self.set_gripper_pos(840)
+
+    def clear_errors(self)-> None:
+        """
+        Clears arm and gripper errors, then re-enables motion and the gripper.
+        Gripper errors persist in the gripper firmware across script restarts, and the SDK
+        ignores set_gripper_enable while a gripper error is active, so the order matters.
+        """
+        self.arm.clean_error()
+        self.arm.clean_warn()
+        self.arm.clean_gripper_error()
+        self.arm.motion_enable(enable=True)
+        code = self.arm.set_gripper_enable(enable=True)
+        if code != 0:
+            print(f"[{self.ip}] Gripper enable failed: code={code}, gripper_err={self.get_gripper_err()}")
 
     def get_states(self)->np.ndarray:
         """Return the current position in [x,y,z,roll,pitch,yaw].
@@ -73,17 +89,28 @@ class xArm7:
         code = self.arm.set_servo_angle_j(angles=joints, is_radian=True)
         return code      
 
-    def set_gripper_pos(self,pos: float)-> None:
+    def set_gripper_pos(self,pos: float)-> int:
         """Set the Grippers positon.
 
         Args:
             pos (float): Target position.
+
+        Returns:
+            int: SDK return code, 0 on success (102 = gripper has a fault)
         """
         if self.gripper_g2:
-            pos_g2 = pos/10
-            self.arm.set_gripper_g2_position(pos=pos_g2, speed=200)
+            pos_g2 = abs(pos/10)
+            code = self.arm.set_gripper_g2_position(pos=pos_g2, speed=200)
         else:
-            self.arm.set_gripper_position(pos=pos,speed=1000)
+            code = self.arm.set_gripper_position(pos=abs(pos),speed=1000)
+        # Only print when the code changes, this runs every control step
+        if code != self._last_gripper_code:
+            if code != 0:
+                print(f"[{self.ip}] Gripper command failed: code={code}, gripper_err={self.get_gripper_err()}")
+            else:
+                print(f"[{self.ip}] Gripper commands working again")
+            self._last_gripper_code = code
+        return code
 
     def get_gripper_pos(self)->float:
         """Returns current Gripper position.
