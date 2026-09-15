@@ -13,6 +13,9 @@ class Dual_xArm7Config(RobotConfig):
     id: str
     robot_ip_right: str = "10.2.134.152"
     robot_ip_left: str = "10.2.134.151"
+    # Max joint change in rad per send_action call. The whole arm delta is scaled down so the
+    # motion keeps its direction. Smooths jumps between action chunks. None disables it.
+    max_step_rad: float | None = None
 
 
     cameras: dict[str, CameraConfig] = field(

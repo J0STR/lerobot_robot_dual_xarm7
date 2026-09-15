@@ -11,16 +11,27 @@ from .xarm_class_joint_space import xArm7
 from xarm.wrapper import XArmAPI
 import numpy as np
 
+
+def limit_joint_step(goal: list[float], present: list[float], max_step: float) -> list[float]:
+    """Move from present towards goal by at most max_step on any joint, keeping the joint-space direction."""
+    delta = np.asarray(goal, dtype=float) - np.asarray(present, dtype=float)
+    largest = np.abs(delta).max()
+    if largest <= max_step:
+        return list(goal)
+    return (np.asarray(present, dtype=float) + delta * (max_step / largest)).tolist()
+
+
 class Dual_xArm7(Robot):
     config_class = Dual_xArm7Config
     name = "Dual_xArm7"
     def __init__(self, config: Dual_xArm7Config):
         super().__init__(config)
-        
+
         self.cameras = make_cameras_from_configs(config.cameras)
-        
+
         self._ip_right = config.robot_ip_right
         self._ip_left = config.robot_ip_left
+        self._max_step_rad = config.max_step_rad
         self.robot_right: xArm7
         self.robot_left: xArm7
         self._is_connected = False
@@ -88,6 +99,13 @@ class Dual_xArm7(Robot):
 
         return obs_dict
     
+    def _limit_step(self, robot: xArm7, goal: list[float]) -> list[float]:
+        # Read fresh joint states, clamping against a failed read would command a jump
+        code, states = robot.arm.get_joint_states(is_radian=True)
+        if code != 0:
+            raise ConnectionError(f"[{robot.ip}] Joint read failed (code={code}), cannot limit step size")
+        return limit_joint_step(goal, states[0], self._max_step_rad)
+
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items()}
 
@@ -96,6 +114,10 @@ class Dual_xArm7(Robot):
 
         gripper_right = goal_pos["right_gripper"]
         gripper_left = goal_pos["left_gripper"]
+
+        if self._max_step_rad is not None:
+            joints_right = self._limit_step(self.robot_right, joints_right)
+            joints_left = self._limit_step(self.robot_left, joints_left)
 
         self.robot_right.set_joints_radian(joints_right)
         self.robot_left.set_joints_radian(joints_left)       
