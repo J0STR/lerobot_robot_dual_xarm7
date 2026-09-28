@@ -1,7 +1,9 @@
 from xarm.wrapper import XArmAPI
 from .xarm_errors import controller_error_codes,gripper_error_codes
 # from myLibs.kinematic.ik_solver import IK_Solver
+import math
 import numpy as np
+import time
 
 init_pose = np.array([-0.020695317536592484,
                        -0.979644238948822,
@@ -31,7 +33,7 @@ class xArm7:
         self.previous_gripper_pos = self.get_gripper_pos()
         self.gripper_timer = 0
         self.gripper_moving = True
-        self._last_gripper_code = 0
+        self.gripper_action = 0
         # Solver vars
         # self.IK_Solver = IK_Solver()
 
@@ -51,11 +53,16 @@ class xArm7:
         Clears arm and gripper errors, then re-enables motion and the gripper.
         Gripper errors persist in the gripper firmware across script restarts, and the SDK
         ignores set_gripper_enable while a gripper error is active, so the order matters.
+        After an arm error the G2 gripper can also hang with enable=1 and no error code (status 2,
+        motor not driven). Enabling it again is a no-op then, only a real off/on edge brings the
+        motor back, so the gripper is always switched off first.
         """
         self.arm.clean_error()
         self.arm.clean_warn()
         self.arm.clean_gripper_error()
         self.arm.motion_enable(enable=True)
+        self.arm.set_gripper_enable(enable=False)
+        time.sleep(0.5)
         code = self.arm.set_gripper_enable(enable=True)
         if code != 0:
             print(f"[{self.ip}] Gripper enable failed: code={code}, gripper_err={self.get_gripper_err()}")
@@ -99,17 +106,10 @@ class xArm7:
             int: SDK return code, 0 on success (102 = gripper has a fault)
         """
         if self.gripper_g2:
-            pos_g2 = abs(pos/10)
-            code = self.arm.set_gripper_g2_position(pos=pos_g2, speed=200)
+            code = self.arm.set_gripper_position(pos=abs(pos),speed=2000)
         else:
             code = self.arm.set_gripper_position(pos=abs(pos),speed=1000)
-        # Only print when the code changes, this runs every control step
-        if code != self._last_gripper_code:
-            if code != 0:
-                print(f"[{self.ip}] Gripper command failed: code={code}, gripper_err={self.get_gripper_err()}")
-            else:
-                print(f"[{self.ip}] Gripper commands working again")
-            self._last_gripper_code = code
+
         return code
 
     def get_gripper_pos(self)->float:

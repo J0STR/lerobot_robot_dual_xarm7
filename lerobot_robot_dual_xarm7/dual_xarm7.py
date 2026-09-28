@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.motors import Motor, MotorNormMode
@@ -35,6 +36,11 @@ class Dual_xArm7(Robot):
         self.robot_right: xArm7
         self.robot_left: xArm7
         self._is_connected = False
+
+        self.current_states_right = None
+        self.current_states_left = None
+
+        self._executor = ThreadPoolExecutor(max_workers=2)
     
     
     def connect(self, calibrate: bool = True) -> None:
@@ -77,34 +83,30 @@ class Dual_xArm7(Robot):
         if not self.is_connected:
             raise ConnectionError(f"{self} is not connected.")
 
-        # Read arm position
-        joint_angles, joint_velocity, joint_efforts = self.robot_right.get_joints_radian()
-        obs_dict = {}
-        for i, angle in enumerate(joint_angles):  # store angle,velocity and effort
-            obs_dict[f"right_joint_{i+1}.pos"] = angle
-            obs_dict[f"right_joint_{i+1}.effort"] = joint_efforts[i]
-            obs_dict[f"right_joint_{i+1}.vel"] = joint_velocity[i]
-        joint_angles, joint_velocity, joint_efforts = self.robot_left.get_joints_radian()
-        for i, angle in enumerate(joint_angles):  # store angle,velocity and effort
-            obs_dict[f"left_joint_{i+1}.pos"] = angle
-            obs_dict[f"left_joint_{i+1}.effort"] = joint_efforts[i]
-            obs_dict[f"left_joint_{i+1}.vel"] = joint_velocity[i]
-        gripper_pos = self.robot_right.get_gripper_pos()
-        obs_dict["right_gripper.pos"] = gripper_pos
-        gripper_pos = self.robot_left.get_gripper_pos()
-        obs_dict["left_gripper.pos"] = gripper_pos
+        # Read both arms in parallel
+        future_right = self._executor.submit(self._read_arm, self.robot_right, "right")
+        future_left = self._executor.submit(self._read_arm, self.robot_left, "left")
+        joints_right, obs_right = future_right.result()
+        joints_left, obs_left = future_left.result()
+        self.current_states_right = joints_right
+        self.current_states_left = joints_left
+        obs_dict = {**obs_right, **obs_left}
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             obs_dict[cam_key] = cam.async_read()
 
         return obs_dict
-    
-    def _limit_step(self, robot: xArm7, goal: list[float]) -> list[float]:
-        # Read fresh joint states, clamping against a failed read would command a jump
-        code, states = robot.arm.get_joint_states(is_radian=True)
-        if code != 0:
-            raise ConnectionError(f"[{robot.ip}] Joint read failed (code={code}), cannot limit step size")
-        return limit_joint_step(goal, states[0], self._max_step_rad)
+
+    @staticmethod
+    def _read_arm(robot: xArm7, side: str) -> tuple[list[float], dict[str, Any]]:
+        joint_angles, joint_velocity, joint_efforts = robot.get_joints_radian()
+        obs = {}
+        for i, angle in enumerate(joint_angles):  # store angle,velocity and effort
+            obs[f"{side}_joint_{i+1}.pos"] = angle
+            obs[f"{side}_joint_{i+1}.effort"] = joint_efforts[i]
+            obs[f"{side}_joint_{i+1}.vel"] = joint_velocity[i]
+        obs[f"{side}_gripper.pos"] = robot.get_gripper_pos()
+        return joint_angles, obs
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items()}
@@ -119,10 +121,11 @@ class Dual_xArm7(Robot):
             joints_right = self._limit_step(self.robot_right, joints_right)
             joints_left = self._limit_step(self.robot_left, joints_left)
 
-        self.robot_right.set_joints_radian(joints_right)
-        self.robot_left.set_joints_radian(joints_left)       
-        self.robot_right.set_gripper_pos(gripper_right)
-        self.robot_left.set_gripper_pos(gripper_left)  
+        # Send to both arms in parallel
+        future_right = self._executor.submit(self._send_arm, self.robot_right, joints_right, gripper_right)
+        future_left = self._executor.submit(self._send_arm, self.robot_left, joints_left, gripper_left)
+        future_right.result()
+        future_left.result()
 
         action = {**{f"right_joint_{i}.pos": joints_right[i-1] for i in range(1,8)},
                   "right_gripper.pos": gripper_right,
@@ -130,6 +133,11 @@ class Dual_xArm7(Robot):
                   "left_gripper.pos": gripper_left}      
 
         return action
+
+    @staticmethod
+    def _send_arm(robot: xArm7, joints: list[float], gripper: float) -> None:
+        robot.set_joints_radian(joints)
+        robot.set_gripper_pos(gripper)
 
 
     def disconnect(self) -> None:
@@ -177,6 +185,7 @@ class Dual_xArm7(Robot):
     @property
     def action_features(self) -> dict:
         return self._motors_ft
+
     
     @property
     def is_connected(self) -> bool:        
@@ -185,6 +194,16 @@ class Dual_xArm7(Robot):
     @property
     def is_calibrated(self) -> bool:
         return True
+
+    def _limit_step(self, robot: xArm7, goal: list[float]) -> list[float]:
+        # Read fresh joint states, clamping against a failed read would command a jump
+        if robot.ip == self._ip_left:
+            states = self.current_states_left
+        else:
+            states = self.current_states_right
+        if states is None:
+            raise ConnectionError(f"[{robot.ip}] Joint read failed, cannot limit step size")
+        return limit_joint_step(goal, states, self._max_step_rad)
 
     def calibrate(self) -> None:
         pass
